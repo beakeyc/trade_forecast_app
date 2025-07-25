@@ -1,10 +1,12 @@
-
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from pmdarima import auto_arima
 from datetime import datetime
 import io
+import itertools
+import numpy as np
+
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 st.set_page_config(page_title="Trade Price Forecaster", layout="wide")
 
@@ -17,17 +19,48 @@ def load_data(sheet):
     df = df.asfreq("Q")
     return df
 
+def auto_arima_like(y, p_max=3, d_max=2, q_max=3):
+    """Very small AIC grid-search to mimic pmdarima.auto_arima."""
+    best_aic = np.inf
+    best_res = None
+    best_order = None
+
+    for p, d, q in itertools.product(range(p_max + 1),
+                                     range(d_max + 1),
+                                     range(q_max + 1)):
+        try:
+            model = SARIMAX(
+                y,
+                order=(p, d, q),
+                enforce_stationarity=False,
+                enforce_invertibility=False
+            )
+            res = model.fit(disp=False)
+            if res.aic < best_aic:
+                best_aic = res.aic
+                best_res = res
+                best_order = (p, d, q)
+        except Exception:
+            continue
+
+    return best_res, best_order
+
 def forecast_arima(df, periods=8):
-    model = auto_arima(df["price"], seasonal=False, stepwise=True, suppress_warnings=True)
-    forecast = model.predict(n_periods=periods)
+    y = df["price"]
+    model, order = auto_arima_like(y)
+    forecast_res = model.get_forecast(steps=periods)
+    forecast = forecast_res.predicted_mean
     forecast_index = pd.date_range(df.index[-1] + pd.offsets.QuarterEnd(), periods=periods, freq="Q")
-    forecast_series = pd.Series(forecast, index=forecast_index)
-    return model, forecast_series
+    forecast.index = forecast_index
+    return model, forecast
 
 def plot_model_fit(df, model, label):
     history = df["price"]
     recent = history[-8:]
-    fitted = pd.Series(model.predict_in_sample()[-8:], index=recent.index)
+
+    # model.fittedvalues aligns to the original index
+    fitted = model.fittedvalues.reindex(recent.index)
+
     fig, ax = plt.subplots()
     ax.plot(recent.index, recent.values, label="Actual", marker='o')
     ax.plot(fitted.index, fitted.values, label="Fitted", linestyle="--", marker='x')
