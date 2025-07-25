@@ -4,4 +4,3 @@ matplotlib
 pmdarima
 openpyxl
 xlsxwriter
-python_version == 3.11
